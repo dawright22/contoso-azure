@@ -1,94 +1,160 @@
-# Contoso Web on AWS - Terraform Deployment
+# Contoso Web on Azure
 
-Deploy the **Contoso Outdoors Company** website to AWS using Terraform, with **chat functionality disabled by default**.
+Deploy the **Contoso Outdoors** website to Azure App Service using **Bicep** (infrastructure) and **GitHub Actions** (CI/CD).
 
-This configuration creates a fully managed infrastructure on AWS to host the Next.js-based Contoso web application.
+Migrated from AWS (EC2 + ALB) to Azure App Service for **~55% cost reduction**.
 
-## What will this do?
+## Architecture
 
-This Terraform configuration creates:
+```
+┌──────────────────────────────────────────────────────┐
+│         Azure App Service (HTTPS, built-in LB)       │
+│         Plan: B1 Linux | Node.js 20 LTS              │
+├──────────────────────────────────────────────────────┤
+│  • Next.js Application (SSR)                         │
+│  • Managed Identity (system-assigned)                │
+│  • Health checks enabled                             │
+│  • HTTPS-only, TLS 1.2, FTP disabled                 │
+├──────────────────────────────────────────────────────┤
+│  Application Insights + Log Analytics (monitoring)   │
+└──────────────────────────────────────────────────────┘
+```
 
-- **VPC & Networking** - Virtual Private Cloud with subnets, routing, and security groups
-- **EC2 Instance** - Ubuntu 22.04 server with Node.js and the Contoso web application
-- **Application Load Balancer** - Routes HTTP traffic to your application
-- **S3 Bucket** - Stores application artifacts
-- **IAM Roles & Policies** - Secure permissions for EC2 instance
-- **Process Manager** - PM2 keeps the application running and auto-restarts
+## Cost Comparison
 
-## What are the prerequisites?
+| Component | AWS (was) | Azure (now) |
+|-----------|-----------|-------------|
+| Compute | EC2 t3.micro: $8 | App Service B1: $13 |
+| Load Balancer | ALB: $15 | Built-in: $0 |
+| Storage | S3: $1 | Not needed: $0 |
+| Monitoring | — | App Insights: Free |
+| **Total** | **~$34/month** | **~$13/month** |
 
-1. **AWS Account** - With appropriate IAM permissions to create EC2, VPC, ALB, S3, and IAM resources
-2. **Terraform** - Version 1.2 or higher
-3. **AWS Credentials** - Configured locally (`~/.aws/credentials` or environment variables)
+## What's Improved
 
-For HCP Terraform: You must have an AWS account and provide your AWS Access Key ID and AWS Secret Access Key to HCP Terraform. HCP Terraform encrypts and stores variables using [Vault](https://www.vaultproject.io/). For more information, see [HCP Terraform variable documentation](https://www.terraform.io/docs/cloud/workspaces/variables.html).
+- ✅ **Built-in HTTPS** with managed certificates (was HTTP-only)
+- ✅ **Built-in load balancing** (no separate ALB to manage)
+- ✅ **CI/CD pipeline** — push to main auto-deploys (was manual `terraform apply`)
+- ✅ **Application monitoring** with App Insights (was none)
+- ✅ **Health checks** built-in (was manual SSH + PM2)
+- ✅ **Managed Identity** for Azure access (no stored credentials)
+- ✅ **Security hardened** — HTTPS-only, TLS 1.2, FTP disabled
+
+## Prerequisites
+
+1. Azure subscription
+2. GitHub repo with Actions enabled
+3. Azure CLI (`az`) for initial OIDC setup
 
 ## Quick Start
 
+### 1. Set Up OIDC Authentication
+
 ```bash
-# 1. Initialize Terraform
-terraform init
+# Create Azure AD App Registration
+az ad app create --display-name "contoso-azure-deploy"
 
-# 2. Review what will be created
-terraform plan
+# Note the appId, then create a service principal
+az ad sp create --id <APP_ID>
 
-# 3. Deploy to AWS
-terraform apply
+# Add federated credential for GitHub Actions
+az ad app federated-credential create --id <APP_ID> --parameters '{
+  "name": "github-actions-main",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:dawright22/contoso-azure:ref:refs/heads/main",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
 
-# 4. Get your application URL
-terraform output alb_url
+# Grant Contributor role on your subscription
+az role assignment create \
+  --assignee <APP_ID> \
+  --role Contributor \
+  --scope /subscriptions/<SUBSCRIPTION_ID>
 ```
 
-After 3-5 minutes, your Contoso web application will be live at the ALB URL!
+### 2. Add GitHub Secrets
 
-## Documentation
+In your repo → Settings → Secrets → Actions, add:
 
-- **[QUICK_START.md](QUICK_START.md)** - 5-minute deployment guide (START HERE)
-- **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Comprehensive deployment and troubleshooting
-- **[CHAT_DISABLING_OPTIONS.md](CHAT_DISABLING_OPTIONS.md)** - Chat functionality configuration options
+| Secret | Value |
+|--------|-------|
+| `AZURE_CLIENT_ID` | App Registration client ID |
+| `AZURE_TENANT_ID` | Azure AD tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Target subscription ID |
 
-## Chat Functionality
+### 3. Deploy
 
-**Status**: Disabled by default (no Azure AI Services endpoints configured)
+```bash
+git push origin main
+# GitHub Actions will automatically build and deploy
+```
 
-The website displays fully functional except for chat features. To enable chat later, you'll need to:
-1. Set up Azure services (Search, AI Services, Prompt Flow)
-2. Configure environment variables
-3. Restart the application
+### 4. Access Your App
 
-See [CHAT_DISABLING_OPTIONS.md](CHAT_DISABLING_OPTIONS.md) for details.
+Check the GitHub Actions run output for the URL, or:
+
+```bash
+az webapp show -g rg-contoso-web-prod --query defaultHostName -o tsv
+```
+
+## Manual Deployment (without CI/CD)
+
+```bash
+# Login to Azure
+az login
+
+# Create resource group
+az group create -n rg-contoso-web-prod -l eastus
+
+# Deploy infrastructure
+az deployment group create \
+  -g rg-contoso-web-prod \
+  --template-file infra/main.bicep \
+  --parameters environment=prod
+
+# Build the app
+cd app && npm ci && npm run build && cd ..
+
+# Deploy the app
+az webapp deploy \
+  --resource-group rg-contoso-web-prod \
+  --name $(az webapp list -g rg-contoso-web-prod --query '[0].name' -o tsv) \
+  --src-path app/ \
+  --type zip
+```
 
 ## File Structure
 
 ```
 .
-├── main.tf                      # AWS infrastructure code
-├── variables.tf                 # Configuration variables
-├── outputs.tf                   # Output values (URLs, IPs, etc.)
-├── terraform.tf                 # Provider configuration
-├── user_data.sh                 # EC2 deployment script
-├── disable-chat.sh              # Optional: remove chat UI components
-├── QUICK_START.md               # Quick deployment guide
-├── DEPLOYMENT_GUIDE.md          # Detailed guide with monitoring
-├── CHAT_DISABLING_OPTIONS.md    # Chat disabling reference
-└── README.md                    # This file
+├── infra/
+│   └── main.bicep               # Azure infrastructure (App Service, App Insights)
+├── .github/
+│   └── workflows/
+│       └── deploy.yml            # CI/CD: build → deploy to Azure
+├── app/                          # Next.js application source
+├── DEPLOYMENT_GUIDE.md           # Detailed deployment guide
+├── CHAT_DISABLING_OPTIONS.md     # Chat configuration options
+└── README.md                     # This file
 ```
 
-## Next Steps
+## Chat Functionality
 
-1. **Read** [QUICK_START.md](QUICK_START.md) for immediate deployment
-2. **Configure** variables in `variables.tf` if needed (region, instance size, etc.)
-3. **Deploy** with `terraform apply`
-4. **Access** your application using the `alb_url` output
-5. **Explore** [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) for monitoring and customization
+**Status**: Disabled by default (no AI endpoints configured).
+
+The website displays fully functional except for chat features. To enable chat:
+1. Set up Azure AI services (Search, OpenAI, etc.)
+2. Add environment variables via App Service configuration
+3. No restart needed — App Service picks up config changes
+
+## Cleanup
+
+```bash
+az group delete -n rg-contoso-web-prod --yes
+```
 
 ## Support
 
-- **Contoso Web Application**: https://github.com/Azure-Samples/contoso-web
-- **Terraform AWS Provider**: https://registry.terraform.io/providers/hashicorp/aws/latest
-- **AWS Documentation**: https://docs.aws.amazon.com/
-- **Next.js Documentation**: https://nextjs.org/docs
-
----
-
-**Ready?** → Open [QUICK_START.md](QUICK_START.md) to get started! 🚀
+- [Azure App Service Docs](https://learn.microsoft.com/azure/app-service/)
+- [Bicep Docs](https://learn.microsoft.com/azure/azure-resource-manager/bicep/)
+- [Contoso Web App](https://github.com/Azure-Samples/contoso-web)

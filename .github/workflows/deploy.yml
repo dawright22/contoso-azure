@@ -1,0 +1,86 @@
+name: Build & Deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: rg-contoso-web-prod
+  AZURE_LOCATION: eastus
+  NODE_VERSION: '20'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build Next.js app
+        working-directory: app
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Create Resource Group
+        run: |
+          az group create \
+            --name ${{ env.AZURE_RESOURCE_GROUP }} \
+            --location ${{ env.AZURE_LOCATION }} \
+            --tags Environment=prod Project=contoso-web ManagedBy=github-actions
+
+      - name: Deploy Infrastructure (Bicep)
+        id: infra
+        run: |
+          RESULT=$(az deployment group create \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --template-file infra/main.bicep \
+            --parameters environment=prod \
+            --query 'properties.outputs' \
+            --output json)
+          echo "webapp_name=$(echo $RESULT | jq -r '.webAppName.value')" >> $GITHUB_OUTPUT
+          echo "webapp_url=$(echo $RESULT | jq -r '.webAppUrl.value')" >> $GITHUB_OUTPUT
+
+      - name: Deploy App to Azure (Zip Deploy)
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ steps.infra.outputs.webapp_name }}
+          package: app/
+
+      - name: Health Check
+        run: |
+          URL="${{ steps.infra.outputs.webapp_url }}"
+          echo "Waiting for app to start..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ App is healthy at $URL"
+              exit 0
+            fi
+            echo "  Attempt $i/30 — status: $STATUS"
+            sleep 10
+          done
+          echo "⚠️ App may still be starting. Check: $URL"
