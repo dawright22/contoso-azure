@@ -113,13 +113,21 @@ az deployment group create \
   --parameters environment=prod
 
 # Build the app
-cd app && npm ci && npm run build && cd ..
+cd app
+npm ci
+npm run build
+cp -r public .next/standalone/
+mkdir -p .next/standalone/.next
+cp -r .next/static .next/standalone/.next/
+cd .next/standalone
+zip -r ../../../contoso-web.zip .
+cd ../../..
 
 # Deploy the app
 az webapp deploy \
   --resource-group rg-contoso-web-prod \
   --name $(az webapp list -g rg-contoso-web-prod --query '[0].name' -o tsv) \
-  --src-path app/ \
+  --src-path contoso-web.zip \
   --type zip
 ```
 
@@ -140,12 +148,13 @@ az webapp deploy \
 
 ## Chat Functionality
 
-**Status**: Disabled by default (no AI endpoints configured).
+**Status**: Removed from the production baseline.
 
-The website displays fully functional except for chat features. To enable chat:
-1. Set up Azure AI services (Search, OpenAI, etc.)
-2. Add environment variables via App Service configuration
-3. No restart needed — App Service picks up config changes
+The storefront and product catalog are fully functional. The archived upstream chat APIs and UI were removed because no AI endpoints are deployed and their obsolete preview SDKs contain known vulnerabilities. Reintroducing chat requires a supported Azure AI SDK, authenticated API routes, and managed identity or Key Vault-backed credentials.
+
+## Application Source
+
+The application under `app/` is derived from archived upstream commit [`e13b0d3`](https://github.com/Azure-Samples/contoso-web/commit/e13b0d346bdc0f2139552df6b9268cbe71b5b644). Its MIT license is retained in `app/LICENSE.md`.
 
 ## Cleanup
 

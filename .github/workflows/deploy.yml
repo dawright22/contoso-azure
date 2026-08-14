@@ -37,6 +37,14 @@ jobs:
         run: npm run build
         env:
           NODE_ENV: production
+          NEXT_TELEMETRY_DISABLED: '1'
+
+      - name: Prepare standalone deployment package
+        working-directory: app
+        run: |
+          cp -r public .next/standalone/
+          mkdir -p .next/standalone/.next
+          cp -r .next/static .next/standalone/.next/
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
@@ -68,11 +76,11 @@ jobs:
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ steps.infra.outputs.webapp_name }}
-          package: app/
+          package: app/.next/standalone/
 
       - name: Health Check
         run: |
-          URL="${{ steps.infra.outputs.webapp_url }}"
+          URL="${{ steps.infra.outputs.webapp_url }}/api/health"
           echo "Waiting for app to start..."
           for i in $(seq 1 30); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || true)

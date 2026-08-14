@@ -76,14 +76,14 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
       alwaysOn: true
-      appCommandLine: 'npm start'
+      appCommandLine: 'node server.js'
       appSettings: [
         { name: 'NODE_ENV', value: nodeEnv }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
         { name: 'WEBSITE_NODE_DEFAULT_VERSION', value: '~20' }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
       ]
-      healthCheckPath: '/'
+      healthCheckPath: '/api/health'
     }
   }
   tags: {

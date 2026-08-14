@@ -21,10 +21,18 @@ Push to `main` triggers automatic build and deploy. See [README.md](README.md#qu
 az login
 az group create -n rg-contoso-web-prod -l eastus
 az deployment group create -g rg-contoso-web-prod --template-file infra/main.bicep
-cd app && npm ci && npm run build && cd ..
+cd app
+npm ci
+npm run build
+cp -r public .next/standalone/
+mkdir -p .next/standalone/.next
+cp -r .next/static .next/standalone/.next/
+cd .next/standalone
+zip -r ../../../contoso-web.zip .
+cd ../../..
 az webapp deploy -g rg-contoso-web-prod \
   --name $(az webapp list -g rg-contoso-web-prod --query '[0].name' -o tsv) \
-  --src-path app/ --type zip
+  --src-path contoso-web.zip --type zip
 ```
 
 ## Monitoring
@@ -42,7 +50,7 @@ az webapp log tail -g rg-contoso-web-prod -n <app-name>
 
 ### Health Check
 
-The app has a health check configured at `/`. Azure automatically restarts unhealthy instances.
+The app has a health check configured at `/api/health`. Azure automatically restarts unhealthy instances.
 
 ### Application Insights
 

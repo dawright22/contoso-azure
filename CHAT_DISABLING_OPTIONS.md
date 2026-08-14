@@ -1,6 +1,10 @@
 # Contoso Web - Chat Disabling Configuration
 
-This file provides options for disabling chat functionality in the Contoso web application on AWS.
+## Current Production Baseline
+
+Chat UI, API routes, and chat-only dependencies have been removed from this Azure deployment. The storefront does not expose nonfunctional chat endpoints or ship the archived preview AI SDKs. The options below are retained as historical context for forks that restore the upstream chat implementation.
+
+This file provides options for disabling chat functionality in the original Contoso web application.
 
 ## Option 1: Environment-Based Disabling (Default)
 
